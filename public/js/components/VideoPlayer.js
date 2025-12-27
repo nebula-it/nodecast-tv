@@ -1,0 +1,505 @@
+/**
+ * Video Player Component
+ * Handles HLS video playback with custom controls
+ */
+
+class VideoPlayer {
+    constructor() {
+        this.video = document.getElementById('video-player');
+        this.overlay = document.getElementById('player-overlay');
+        this.nowPlaying = document.getElementById('now-playing');
+        this.hls = null;
+        this.currentChannel = null;
+        this.overlayTimer = null;
+        this.overlayDuration = 5000; // 5 seconds
+        this.isUsingProxy = false;
+        this.currentUrl = null;
+
+        // Settings (loaded from localStorage)
+        this.settings = this.loadSettings();
+
+        this.init();
+    }
+
+    /**
+     * Load settings from localStorage
+     */
+    loadSettings() {
+        const defaults = {
+            arrowKeysChangeChannel: true, // Use arrow keys for channel navigation
+            overlayDuration: 5, // Seconds
+            defaultVolume: 80, // 0-100
+            rememberVolume: true, // Persist volume between sessions
+            lastVolume: 80, // Last used volume (if rememberVolume is true)
+            autoPlayNextEpisode: false // Auto-play next episode in series
+        };
+        try {
+            const saved = localStorage.getItem('nodecast_tv_player_settings');
+            if (saved) {
+                return { ...defaults, ...JSON.parse(saved) };
+            }
+        } catch (err) {
+            console.error('Error loading settings:', err);
+        }
+        return defaults;
+    }
+
+    /**
+     * Save settings to localStorage
+     */
+    saveSettings() {
+        try {
+            localStorage.setItem('nodecast_tv_player_settings', JSON.stringify(this.settings));
+        } catch (err) {
+            console.error('Error saving settings:', err);
+        }
+    }
+
+    init() {
+        // Apply default/remembered volume
+        const volume = this.settings.rememberVolume ? this.settings.lastVolume : this.settings.defaultVolume;
+        this.video.volume = volume / 100;
+
+        // Save volume changes
+        this.video.addEventListener('volumechange', () => {
+            if (this.settings.rememberVolume) {
+                this.settings.lastVolume = Math.round(this.video.volume * 100);
+                this.saveSettings();
+            }
+        });
+
+        // Initialize HLS.js if supported
+        if (Hls.isSupported()) {
+            this.hls = new Hls({
+                enableWorker: true,
+                lowLatencyMode: true
+            });
+
+            this.hls.on(Hls.Events.ERROR, (event, data) => {
+                console.error('HLS error:', data);
+                if (data.fatal) {
+                    switch (data.type) {
+                        case Hls.ErrorTypes.NETWORK_ERROR:
+                            // If it's a network error and we haven't tried the proxy yet, try it
+                            if (this.currentChannel && !this.isUsingProxy) {
+                                console.log('Network error detected, trying via proxy...');
+                                const proxiedUrl = this.getProxiedUrl(this.currentUrl);
+                                this.isUsingProxy = true;
+                                this.hls.loadSource(proxiedUrl);
+                                this.hls.startLoad();
+                            } else {
+                                console.log('Network error, attempting recovery...');
+                                this.hls.startLoad();
+                            }
+                            break;
+                        case Hls.ErrorTypes.MEDIA_ERROR:
+                            console.log('Media error, attempting recovery...');
+                            this.hls.recoverMediaError();
+                            break;
+                        default:
+                            this.stop();
+                            break;
+                    }
+                }
+            });
+
+            this.hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                this.video.play().catch(e => console.log('Autoplay prevented:', e));
+            });
+        }
+
+        // Keyboard controls
+        document.addEventListener('keydown', (e) => this.handleKeyboard(e));
+
+        // Click on video shows overlay
+        this.video.addEventListener('click', () => this.showNowPlayingOverlay());
+    }
+
+    /**
+     * Show the now playing overlay briefly
+     */
+    showNowPlayingOverlay() {
+        if (!this.currentChannel) return;
+
+        // Clear existing timer
+        if (this.overlayTimer) {
+            clearTimeout(this.overlayTimer);
+        }
+
+        // Show overlay
+        this.nowPlaying.classList.remove('hidden');
+
+        // Hide after duration
+        this.overlayTimer = setTimeout(() => {
+            this.nowPlaying.classList.add('hidden');
+        }, this.settings.overlayDuration * 1000);
+    }
+
+    /**
+     * Hide the now playing overlay
+     */
+    hideNowPlayingOverlay() {
+        if (this.overlayTimer) {
+            clearTimeout(this.overlayTimer);
+        }
+        this.nowPlaying.classList.add('hidden');
+    }
+
+    /**
+     * Play a channel
+     */
+    async play(channel, streamUrl) {
+        this.currentChannel = channel;
+
+        try {
+            // Stop current playback
+            this.stop();
+
+            // Hide "select a channel" overlay
+            this.overlay.classList.add('hidden');
+
+            // Determine if HLS or direct stream
+            this.currentUrl = streamUrl;
+
+            // Proactively use proxy for known CORS-restricted domains (like Pluto TV)
+            const proxyRequiredDomains = ['pluto.tv'];
+            const needsProxy = proxyRequiredDomains.some(domain => streamUrl.includes(domain));
+
+            this.isUsingProxy = needsProxy;
+            const finalUrl = needsProxy ? this.getProxiedUrl(streamUrl) : streamUrl;
+
+            if (finalUrl.includes('.m3u8') && Hls.isSupported()) {
+                this.hls = new Hls();
+                this.hls.loadSource(finalUrl);
+                this.hls.attachMedia(this.video);
+
+                this.hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                    this.video.play().catch(e => console.log('Autoplay prevented:', e));
+                });
+
+                // Re-attach error handler for the new Hls instance
+                this.hls.on(Hls.Events.ERROR, (event, data) => {
+                    if (data.fatal) {
+                        if (data.type === Hls.ErrorTypes.NETWORK_ERROR && !this.isUsingProxy) {
+                            console.log('CORS/Network error detected, retrying via proxy...');
+                            this.isUsingProxy = true;
+                            this.hls.loadSource(this.getProxiedUrl(this.currentUrl));
+                            this.hls.startLoad();
+                        } else {
+                            console.error('Fatal HLS error:', data);
+                        }
+                    }
+                });
+            } else if (this.video.canPlayType('application/vnd.apple.mpegurl')) {
+                // Native HLS support (Safari)
+                this.video.src = finalUrl;
+                this.video.play().catch(e => {
+                    console.log('Autoplay prevented, trying proxy if CORS error:', e);
+                    if (!this.isUsingProxy) {
+                        this.isUsingProxy = true;
+                        this.video.src = this.getProxiedUrl(streamUrl);
+                        this.video.play().catch(err => console.error('Proxy play failed:', err));
+                    }
+                });
+            } else {
+                // Try direct playback
+                this.video.src = finalUrl;
+                this.video.play().catch(e => console.log('Autoplay prevented:', e));
+            }
+
+            // Update now playing info
+            this.updateNowPlaying(channel);
+
+            // Show the now playing overlay
+            this.showNowPlayingOverlay();
+
+            // Fetch EPG data for this channel
+            this.fetchEpgData(channel);
+
+            // Dispatch event
+            window.dispatchEvent(new CustomEvent('channelChanged', { detail: channel }));
+
+        } catch (err) {
+            console.error('Error playing channel:', err);
+            this.showError('Failed to play channel');
+        }
+    }
+
+    /**
+     * Fetch EPG data for current channel
+     */
+    async fetchEpgData(channel) {
+        try {
+            // First, try to use the centralized EpgGuide data (already loaded)
+            if (window.app && window.app.epgGuide && window.app.epgGuide.programmes) {
+                const epgGuide = window.app.epgGuide;
+
+                // Get current program from EpgGuide
+                const currentProgram = epgGuide.getCurrentProgram(channel.tvgId, channel.name);
+
+                if (currentProgram) {
+                    // Find upcoming programs from the guide's data
+                    const epgChannel = epgGuide.channelMap?.get(channel.tvgId) ||
+                        epgGuide.channelMap?.get(channel.name?.toLowerCase());
+
+                    let upcoming = [];
+                    if (epgChannel) {
+                        const now = Date.now();
+                        upcoming = epgGuide.programmes
+                            .filter(p => p.channelId === epgChannel.id && new Date(p.start).getTime() > now)
+                            .slice(0, 5)
+                            .map(p => ({
+                                title: p.title,
+                                start: new Date(p.start),
+                                stop: new Date(p.stop),
+                                description: p.desc || ''
+                            }));
+                    }
+
+                    this.updateNowPlaying(channel, {
+                        current: {
+                            title: currentProgram.title,
+                            start: new Date(currentProgram.start),
+                            stop: new Date(currentProgram.stop),
+                            description: currentProgram.desc || ''
+                        },
+                        upcoming
+                    });
+                    return; // Success, exit early
+                }
+            }
+
+            // Fallback: Try to get EPG from Xtream API if available
+            if (channel.sourceType === 'xtream' && channel.streamId) {
+                const epgData = await API.proxy.xtream.shortEpg(channel.sourceId, channel.streamId);
+                if (epgData && epgData.epg_listings && epgData.epg_listings.length > 0) {
+                    const listings = epgData.epg_listings;
+                    const now = Math.floor(Date.now() / 1000);
+
+                    // Find current program
+                    const current = listings.find(p => {
+                        const start = parseInt(p.start_timestamp);
+                        const end = parseInt(p.stop_timestamp);
+                        return start <= now && end > now;
+                    });
+
+                    // Get upcoming programs
+                    const upcoming = listings
+                        .filter(p => parseInt(p.start_timestamp) > now)
+                        .slice(0, 5)
+                        .map(p => ({
+                            title: this.decodeBase64(p.title),
+                            start: new Date(parseInt(p.start_timestamp) * 1000),
+                            stop: new Date(parseInt(p.stop_timestamp) * 1000),
+                            description: this.decodeBase64(p.description)
+                        }));
+
+                    if (current) {
+                        this.updateNowPlaying(channel, {
+                            current: {
+                                title: this.decodeBase64(current.title),
+                                start: new Date(parseInt(current.start_timestamp) * 1000),
+                                stop: new Date(parseInt(current.stop_timestamp) * 1000),
+                                description: this.decodeBase64(current.description)
+                            },
+                            upcoming
+                        });
+                    }
+                }
+            }
+        } catch (err) {
+            console.log('EPG data not available:', err.message);
+        }
+    }
+
+    /**
+     * Get proxied URL for a stream
+     */
+    getProxiedUrl(url) {
+        return `/api/proxy/stream?url=${encodeURIComponent(url)}`;
+    }
+
+    /**
+     * Decode base64 EPG data
+     */
+    decodeBase64(str) {
+        if (!str) return '';
+        try {
+            return decodeURIComponent(escape(atob(str)));
+        } catch {
+            return str;
+        }
+    }
+
+    /**
+     * Stop playback
+     */
+    stop() {
+        if (this.hls) {
+            this.hls.destroy();
+            this.hls = null;
+        }
+        this.video.pause();
+        this.video.src = '';
+        this.video.load();
+    }
+
+    /**
+     * Update now playing display
+     */
+    updateNowPlaying(channel, epgData = null) {
+        const channelName = this.nowPlaying.querySelector('.channel-name');
+        const programTitle = this.nowPlaying.querySelector('.program-title');
+        const programTime = this.nowPlaying.querySelector('.program-time');
+        const upNextList = document.getElementById('up-next-list');
+
+        channelName.textContent = channel.name || channel.tvgName || 'Unknown Channel';
+
+        if (epgData && epgData.current) {
+            programTitle.textContent = epgData.current.title;
+            const start = new Date(epgData.current.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const end = new Date(epgData.current.stop).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            programTime.textContent = `${start} - ${end}`;
+        } else {
+            programTitle.textContent = '';
+            programTime.textContent = '';
+        }
+
+        // Update up next
+        upNextList.innerHTML = '';
+        if (epgData && epgData.upcoming) {
+            epgData.upcoming.slice(0, 3).forEach(prog => {
+                const li = document.createElement('li');
+                const time = new Date(prog.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                li.textContent = `${time} - ${prog.title}`;
+                upNextList.appendChild(li);
+            });
+        }
+    }
+
+    /**
+     * Show error overlay
+     */
+    showError(message) {
+        this.overlay.classList.remove('hidden');
+        this.overlay.querySelector('.overlay-content').innerHTML = `<p style="color: var(--color-error);">${message}</p>`;
+    }
+
+    /**
+     * Handle keyboard shortcuts
+     */
+    handleKeyboard(e) {
+        if (document.activeElement.tagName === 'INPUT') return;
+
+        switch (e.key) {
+            case ' ':
+            case 'k':
+                e.preventDefault();
+                this.video.paused ? this.video.play() : this.video.pause();
+                break;
+            case 'f':
+                e.preventDefault();
+                this.toggleFullscreen();
+                break;
+            case 'm':
+                e.preventDefault();
+                this.video.muted = !this.video.muted;
+                break;
+            case 'ArrowUp':
+                e.preventDefault();
+                if (this.settings.arrowKeysChangeChannel) {
+                    this.channelUp();
+                } else {
+                    this.video.volume = Math.min(1, this.video.volume + 0.1);
+                }
+                break;
+            case 'ArrowDown':
+                e.preventDefault();
+                if (this.settings.arrowKeysChangeChannel) {
+                    this.channelDown();
+                } else {
+                    this.video.volume = Math.max(0, this.video.volume - 0.1);
+                }
+                break;
+            case 'ArrowLeft':
+                e.preventDefault();
+                // Volume down when arrow keys are for channels
+                if (this.settings.arrowKeysChangeChannel) {
+                    this.video.volume = Math.max(0, this.video.volume - 0.1);
+                }
+                break;
+            case 'ArrowRight':
+                e.preventDefault();
+                // Volume up when arrow keys are for channels
+                if (this.settings.arrowKeysChangeChannel) {
+                    this.video.volume = Math.min(1, this.video.volume + 0.1);
+                }
+                break;
+            case 'PageUp':
+            case 'ChannelUp':
+                e.preventDefault();
+                this.channelUp();
+                break;
+            case 'PageDown':
+            case 'ChannelDown':
+                e.preventDefault();
+                this.channelDown();
+                break;
+            case 'i':
+                // Show/hide info overlay
+                e.preventDefault();
+                if (this.nowPlaying.classList.contains('hidden')) {
+                    this.showNowPlayingOverlay();
+                } else {
+                    this.hideNowPlayingOverlay();
+                }
+                break;
+        }
+    }
+
+    /**
+     * Go to previous channel
+     */
+    channelUp() {
+        if (!window.app?.channelList) return;
+        const channels = window.app.channelList.getVisibleChannels();
+        if (channels.length === 0) return;
+
+        const currentIdx = this.currentChannel
+            ? channels.findIndex(c => c.id === this.currentChannel.id)
+            : -1;
+
+        const prevIdx = currentIdx <= 0 ? channels.length - 1 : currentIdx - 1;
+        window.app.channelList.selectChannel({ channelId: channels[prevIdx].id });
+    }
+
+    /**
+     * Go to next channel
+     */
+    channelDown() {
+        if (!window.app?.channelList) return;
+        const channels = window.app.channelList.getVisibleChannels();
+        if (channels.length === 0) return;
+
+        const currentIdx = this.currentChannel
+            ? channels.findIndex(c => c.id === this.currentChannel.id)
+            : -1;
+
+        const nextIdx = currentIdx >= channels.length - 1 ? 0 : currentIdx + 1;
+        window.app.channelList.selectChannel({ channelId: channels[nextIdx].id });
+    }
+
+    /**
+     * Toggle fullscreen
+     */
+    toggleFullscreen() {
+        if (document.fullscreenElement) {
+            document.exitFullscreen();
+        } else {
+            this.video.requestFullscreen();
+        }
+    }
+}
+
+// Export
+window.VideoPlayer = VideoPlayer;

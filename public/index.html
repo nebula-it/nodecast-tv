@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NodeCast TV | IPTV Player</title>
+  <meta name="description" content="Stream live TV, movies, and series with EPG support">
+  <link rel="stylesheet" href="css/main.css">
+  <!-- HLS.js for video playback -->
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.7/dist/hls.min.js"></script>
+</head>
+
+<body>
+  <div id="app">
+    <!-- Navigation -->
+    <nav class="navbar">
+      <div class="navbar-brand">
+        <span class="logo">📺</span>
+        <span class="brand-text">Trev-TV</span>
+      </div>
+      <div class="navbar-menu">
+        <a href="#" class="nav-link active" data-page="home">
+          <span class="nav-icon">📡</span>
+          <span>Live TV</span>
+        </a>
+        <a href="#" class="nav-link" data-page="guide">
+          <span class="nav-icon">📋</span>
+          <span>TV Guide</span>
+        </a>
+        <a href="#" class="nav-link" data-page="movies">
+          <span class="nav-icon">🎬</span>
+          <span>Movies</span>
+        </a>
+        <a href="#" class="nav-link" data-page="series">
+          <span class="nav-icon">📺</span>
+          <span>Series</span>
+        </a>
+        <a href="#" class="nav-link" data-page="settings">
+          <span class="nav-icon">⚙️</span>
+          <span>Settings</span>
+        </a>
+      </div>
+    </nav>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Home Page -->
+      <div id="page-home" class="page active">
+        <div class="home-layout">
+          <!-- Channel Sidebar -->
+          <aside class="channel-sidebar">
+            <div class="sidebar-header">
+              <input type="text" id="channel-search" placeholder="Search channels..." class="search-input">
+              <div class="sidebar-controls">
+                <select id="source-select" class="source-select">
+                  <option value="">All Sources</option>
+                </select>
+                <button id="toggle-groups" class="btn btn-sm btn-ghost" title="Expand/Collapse All">
+                  <span>⊟</span>
+                </button>
+
+              </div>
+            </div>
+            <div id="channel-list" class="channel-list">
+              <div class="empty-state">
+                <p>No channels loaded</p>
+                <p class="hint">Add a source in Settings to get started</p>
+              </div>
+            </div>
+          </aside>
+
+          <!-- Video Player Area -->
+          <section class="player-section">
+            <div class="video-container">
+              <video id="video-player" controls></video>
+              <div class="player-overlay" id="player-overlay">
+                <div class="overlay-content">
+                  <p>Select a channel to start watching</p>
+                </div>
+              </div>
+              <!-- Now Playing Overlay -->
+              <div class="now-playing-overlay hidden" id="now-playing">
+                <div class="now-playing-info">
+                  <h3 class="channel-name">No channel selected</h3>
+                  <p class="program-title"></p>
+                  <p class="program-time"></p>
+                </div>
+                <div class="up-next">
+                  <h4>Up Next</h4>
+                  <ul id="up-next-list"></ul>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <!-- Guide Page -->
+      <div id="page-guide" class="page">
+        <div class="guide-header">
+          <h2>TV Guide</h2>
+          <div class="guide-controls">
+            <input type="text" id="epg-search" placeholder="Search channels..." class="search-input"
+              style="min-width: 200px;">
+            <select id="epg-group-select" class="source-select">
+              <option value="">All Groups</option>
+            </select>
+            <button id="guide-prev" class="btn btn-ghost">&larr; Earlier</button>
+            <span id="guide-date" class="guide-date">Today</span>
+            <button id="guide-next" class="btn btn-ghost">Later &rarr;</button>
+          </div>
+        </div>
+        <div id="epg-grid" class="epg-grid">
+          <div class="empty-state">
+            <p>No EPG data available</p>
+            <p class="hint">Add an EPG source in Settings</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Movies Page -->
+      <div id="page-movies" class="page">
+        <div class="movies-header">
+          <h2>Movies</h2>
+          <div class="movies-controls">
+            <select id="movies-source-select" class="source-select">
+              <option value="">All Sources</option>
+            </select>
+            <select id="movies-category-select" class="source-select">
+              <option value="">All Categories</option>
+            </select>
+            <input type="text" id="movies-search" placeholder="Search movies..." class="search-input">
+            <button id="movies-favorites-btn" class="btn btn-icon btn-ghost" title="Show Favorites Only">
+              ♥ Favorites
+            </button>
+          </div>
+        </div>
+        <div id="movies-grid" class="movies-grid">
+          <div class="empty-state">
+            <p>Loading movies...</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Series Page -->
+      <div id="page-series" class="page">
+        <div class="series-header">
+          <h2>Series</h2>
+          <div class="series-controls">
+            <select id="series-source-select" class="source-select">
+              <option value="">All Sources</option>
+            </select>
+            <select id="series-category-select" class="source-select">
+              <option value="">All Categories</option>
+            </select>
+            <input type="text" id="series-search" placeholder="Search series..." class="search-input">
+            <button id="series-favorites-btn" class="btn btn-icon btn-ghost" title="Show Favorites Only">
+              ♥ Favorites
+            </button>
+          </div>
+        </div>
+        <div class="series-content">
+          <div id="series-grid" class="series-grid">
+            <div class="empty-state">
+              <p>Loading series...</p>
+            </div>
+          </div>
+          <!-- Series details panel (seasons/episodes) -->
+          <div id="series-details" class="series-details hidden">
+            <button class="series-back-btn">← Back to Series</button>
+            <div class="series-details-header">
+              <img id="series-poster" src="" alt="" class="series-poster">
+              <div class="series-info">
+                <h3 id="series-title"></h3>
+                <p id="series-plot"></p>
+              </div>
+            </div>
+            <div id="series-seasons" class="series-seasons"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings Page -->
+      <div id="page-settings" class="page">
+        <div class="settings-container">
+          <h2>Settings</h2>
+
+          <!-- Tabs -->
+          <div class="tabs">
+            <button class="tab active" data-tab="sources">Sources</button>
+            <button class="tab" data-tab="player">Player</button>
+            <button class="tab" data-tab="content">Manage Content</button>
+          </div>
+
+          <!-- Sources Tab -->
+          <div id="tab-sources" class="tab-content active">
+            <div class="source-section">
+              <div class="section-header">
+                <h3>Xtream Connections</h3>
+                <button class="btn btn-primary" id="add-xtream">+ Add Xtream</button>
+              </div>
+              <div id="xtream-list" class="source-list"></div>
+            </div>
+
+            <div class="source-section">
+              <div class="section-header">
+                <h3>M3U Playlists</h3>
+                <button class="btn btn-primary" id="add-m3u">+ Add M3U</button>
+              </div>
+              <div id="m3u-list" class="source-list"></div>
+            </div>
+
+            <div class="source-section">
+              <div class="section-header">
+                <h3>EPG Sources</h3>
+                <button class="btn btn-primary" id="add-epg">+ Add EPG</button>
+              </div>
+              <div id="epg-list" class="source-list"></div>
+            </div>
+
+            <div class="source-section">
+              <h3>EPG Data Settings</h3>
+              <div class="setting-item">
+                <label for="epg-refresh-interval">Auto-refresh EPG data every:</label>
+                <select id="epg-refresh-interval" class="form-input">
+                  <option value="1">1 hour</option>
+                  <option value="2">2 hours</option>
+                  <option value="4">4 hours</option>
+                  <option value="12">12 hours</option>
+                  <option value="24" selected>24 hours</option>
+                  <option value="0">Manual only</option>
+                </select>
+              </div>
+              <p class="hint">Use the 🔄 button next to EPG sources for manual refresh</p>
+            </div>
+          </div>
+
+          <!-- Player Tab -->
+          <div id="tab-player" class="tab-content">
+            <div class="settings-section">
+              <h3>Keyboard Controls</h3>
+              <div class="setting-item">
+                <label class="setting-toggle">
+                  <input type="checkbox" id="setting-arrow-keys" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+                <div class="setting-info">
+                  <span class="setting-label">Arrow keys change channels</span>
+                  <span class="setting-hint">When enabled, ↑/↓ change channels and ←/→ adjust volume</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-section">
+              <h3>Now Playing Overlay</h3>
+              <div class="setting-item">
+                <label for="setting-overlay-duration">Display Duration (seconds)</label>
+                <input type="number" id="setting-overlay-duration" class="form-input setting-number" min="1" max="30"
+                  value="5">
+              </div>
+            </div>
+
+            <div class="settings-section">
+              <h3>Volume Settings</h3>
+              <div class="setting-item">
+                <label for="setting-default-volume">Default Volume</label>
+                <div class="volume-slider-container">
+                  <input type="range" id="setting-default-volume" class="volume-slider" min="0" max="100" value="80">
+                  <span id="volume-value">80%</span>
+                </div>
+              </div>
+              <div class="setting-item">
+                <label class="setting-toggle">
+                  <input type="checkbox" id="setting-remember-volume" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+                <div class="setting-info">
+                  <span class="setting-label">Remember Last Volume</span>
+                  <span class="setting-hint">When enabled, volume persists between sessions</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-section">
+              <h3>Playback</h3>
+              <div class="setting-item">
+                <label class="setting-toggle">
+                  <input type="checkbox" id="setting-autoplay-next">
+                  <span class="toggle-slider"></span>
+                </label>
+                <div class="setting-info">
+                  <span class="setting-label">Auto-play Next Episode</span>
+                  <span class="setting-hint">Automatically play the next episode when one ends</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-section">
+              <h3>Keyboard Shortcuts</h3>
+              <div class="shortcuts-grid">
+                <div class="shortcut"><kbd>↑</kbd> / <kbd>↓</kbd> Channel up/down (or volume)</div>
+                <div class="shortcut"><kbd>←</kbd> / <kbd>→</kbd> Volume down/up (when arrows = channels)</div>
+                <div class="shortcut"><kbd>Space</kbd> / <kbd>K</kbd> Play/Pause</div>
+                <div class="shortcut"><kbd>F</kbd> Fullscreen</div>
+                <div class="shortcut"><kbd>M</kbd> Mute/Unmute</div>
+                <div class="shortcut"><kbd>I</kbd> Toggle info overlay</div>
+                <div class="shortcut"><kbd>PgUp</kbd> / <kbd>PgDn</kbd> Channel up/down</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Manage Content Tab -->
+          <div id="tab-content" class="tab-content">
+            <div class="content-browser">
+              <div class="content-browser-header">
+                <div class="content-type-toggle">
+                  <button class="btn btn-sm active" id="content-type-channels">Channels</button>
+                  <button class="btn btn-sm" id="content-type-movies">Movies</button>
+                  <button class="btn btn-sm" id="content-type-series">Series</button>
+                </div>
+                <select id="content-source-select" class="source-select">
+                  <option value="">Select a source...</option>
+                </select>
+                <div class="content-actions">
+                  <button class="btn btn-sm btn-secondary" id="content-show-all">Show All</button>
+                  <button class="btn btn-sm btn-secondary" id="content-hide-all">Hide All</button>
+                </div>
+              </div>
+              <p class="hint" style="margin-bottom: var(--space-sm);">✓ Checked = Visible, ☐ Unchecked = Hidden</p>
+              <div id="content-tree" class="content-tree">
+                <p class="hint">Select a source to view groups and channels</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Modal Template -->
+  <div id="modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modal-title">Modal</h3>
+        <button class="modal-close">&times;</button>
+      </div>
+      <div id="modal-body" class="modal-body"></div>
+      <div id="modal-footer" class="modal-footer"></div>
+    </div>
+  </div>
+
+  <!-- Context Menu Template -->
+  <div id="context-menu" class="context-menu">
+    <button class="context-item" data-action="play">▶ Play</button>
+    <button class="context-item" data-action="hide">👁 Hide</button>
+    <button class="context-item" data-action="epg">📋 EPG Info</button>
+  </div>
+
+  <!-- JavaScript -->
+  <script src="/js/api.js?v=2"></script>
+  <script src="/js/components/VideoPlayer.js?v=2"></script>
+  <script src="/js/components/ChannelList.js?v=3"></script>
+  <script src="/js/components/SourceManager.js?v=2"></script>
+  <script src="/js/components/EpgGuide.js?v=2"></script>
+  <script src="/js/pages/Home.js?v=3"></script>
+  <script src="/js/pages/Guide.js?v=2"></script>
+  <script src="/js/pages/MoviesPage.js?v=4"></script>
+  <script src="/js/pages/SeriesPage.js?v=1"></script>
+  <script src="/js/pages/Settings.js?v=2"></script>
+  <script src="/js/app.js?v=3"></script>
+</body>
+
+</html>
