@@ -69,6 +69,9 @@ class VideoPlayer {
             // Live stream settings - stay further from live edge for stability
             liveSyncDurationCount: 3,      // Stay 3 segments behind live
             liveMaxLatencyDurationCount: 10, // Allow up to 10 segments behind before catching up
+            // Handle audio discontinuities (fixes garbled audio during ad transitions)
+            stretchShortVideoTrack: true,  // Stretch short segments to avoid gaps
+            forceKeyFrameOnDiscontinuity: true, // Force keyframe sync on discontinuity
             // Faster recovery from errors
             levelLoadingMaxRetry: 4,
             manifestLoadingMaxRetry: 4,
