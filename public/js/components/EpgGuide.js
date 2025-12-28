@@ -196,7 +196,7 @@ class EpgGuide {
 
         // Load favorites
         const favs = await API.favorites.getAll();
-        this.favorites = new Set(favs.map(f => `${f.source_id}:${f.channel_id}`));
+        this.favorites = new Set(favs.map(f => `${f.source_id}:${f.item_id}`));
     }
 
     /**
