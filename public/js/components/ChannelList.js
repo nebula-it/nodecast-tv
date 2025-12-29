@@ -283,25 +283,33 @@ class ChannelList {
             if (channels.length === 0) continue;
 
             const isFavoritesGroup = groupName === 'Favorites';
-            const groupHidden = !isFavoritesGroup && channels.length > 0 && this.isHidden('group', channels[0].sourceId, groupName);
 
-            if (groupHidden && !this.showHidden) continue;
+            // Pre-filter visible channels for this group
+            const visibleChannels = channels.filter(channel => {
+                if (isFavoritesGroup) return true;
+                const rawChannelId = channel.streamId || channel.id;
+                const channelHidden = this.isHidden('channel', channel.sourceId, rawChannelId);
+                return !channelHidden || this.showHidden;
+            });
+
+            // Skip group if no visible channels (derived visibility)
+            if (visibleChannels.length === 0) continue;
 
             html += `
         <div class="channel-group">
-          <div class="group-header ${groupHidden ? 'hidden' : ''} ${this.collapsedGroups.has(groupName) ? 'collapsed' : ''} ${isFavoritesGroup ? 'favorites-group' : ''}" data-group="${groupName}">
+          <div class="group-header ${this.collapsedGroups.has(groupName) ? 'collapsed' : ''} ${isFavoritesGroup ? 'favorites-group' : ''}" data-group="${groupName}">
             <span class="group-toggle">▼</span>
             <span class="group-name">${groupName}</span>
-            <span class="group-count">${channels.length}</span>
+            <span class="group-count">${visibleChannels.length}</span>
           </div>
           <div class="group-channels">
       `;
 
-            for (const channel of channels) {
-                // Use streamId (raw ID) for hidden check since that's what SourceManager stores
+
+            for (const channel of visibleChannels) {
+                // Check hidden again for styling (showHidden mode)
                 const rawChannelId = channel.streamId || channel.id;
                 const channelHidden = !isFavoritesGroup && this.isHidden('channel', channel.sourceId, rawChannelId);
-                if (channelHidden && !this.showHidden) continue;
 
                 const isActive = this.currentChannel?.id === channel.id;
                 const isFavorite = this.isFavorite(channel.sourceId, channel.id);

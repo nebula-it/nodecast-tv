@@ -371,6 +371,9 @@ class SourceManager {
         // Show All / Hide All buttons
         document.getElementById('content-show-all')?.addEventListener('click', () => this.setAllVisibility(true));
         document.getElementById('content-hide-all')?.addEventListener('click', () => this.setAllVisibility(false));
+
+        // Save Changes button
+        document.getElementById('content-save')?.addEventListener('click', () => this.saveContentChanges());
     }
 
     /**
@@ -516,11 +519,11 @@ class SourceManager {
      * Get HTML for a group (and its items if expanded)
      */
     getGroupHtml(group) {
-        const isHidden = this.hiddenSet.has(`group:${group.name}`); // We use name as ID for groups usually
         const isExpanded = this.expandedGroups.has(group.id);
 
-        // Calculate partial state if needed, but for now simple checked/unchecked
-        const checked = !isHidden;
+        // Group checkbox is checked if ANY child is visible (derived state)
+        const hasVisibleChild = group.items.some(item => !this.hiddenSet.has(`${item.type}:${item.id}`));
+        const checked = hasVisibleChild;
 
         let itemsHtml = '';
         if (isExpanded) {
@@ -718,16 +721,15 @@ class SourceManager {
     }
 
     /**
-     * Toggle visibility of a single item
+     * Toggle visibility of a single item (LOCAL STATE ONLY - use Save to persist)
      * Checked = show (remove from hidden), Unchecked = hide (add to hidden)
      */
-    async toggleVisibility(checkbox) {
-        const sourceId = parseInt(checkbox.dataset.sourceId);
+    toggleVisibility(checkbox) {
         const itemType = checkbox.dataset.type;
         const itemId = checkbox.dataset.id;
-        const isVisible = checkbox.checked; // This is the NEW state taken from UI
+        const isVisible = checkbox.checked;
 
-        // Update local state directly
+        // Update local state only (will be persisted when Save is clicked)
         const key = `${itemType}:${itemId}`;
         if (isVisible) {
             this.hiddenSet.delete(key);
@@ -735,166 +737,138 @@ class SourceManager {
             this.hiddenSet.add(key);
         }
 
-        try {
-            // Fire API call
-            const apiCall = isVisible
-                ? API.channels.show(sourceId, itemType, itemId)
-                : API.channels.hide(sourceId, itemType, itemId);
-
-            if (itemType === 'vod_category' || itemType === 'series_category') {
-                apiCall.catch(err => {
-                    console.error(`Error toggling ${itemType} visibility:`, err);
-                    checkbox.checked = !isVisible;
-                });
-                return;
+        // Update parent group checkbox to reflect derived state
+        const groupEl = checkbox.closest('.content-group');
+        if (groupEl) {
+            const groupCheckbox = groupEl.querySelector('.group-checkbox');
+            if (groupCheckbox) {
+                const groupId = groupEl.dataset.groupId;
+                const group = this.treeData.groups.find(g => g.id === groupId);
+                if (group) {
+                    const hasVisibleChild = group.items.some(item => !this.hiddenSet.has(`${item.type}:${item.id}`));
+                    groupCheckbox.checked = hasVisibleChild;
+                }
             }
-
-            await apiCall;
-            // No need to "refresh" since we updated state locally and UI is already correct
-
-
-            // Sync Channel List
-            if (window.app?.channelList) {
-                // We could just pass the change? But safely reloading hidden is better
-                await window.app.channelList.loadHiddenItems();
-                window.app.channelList.render();
-            }
-        } catch (err) {
-            console.error('Error toggling visibility:', err);
-            // Revert state and UI
-            if (isVisible) this.hiddenSet.add(key);
-            else this.hiddenSet.delete(key);
-
-            checkbox.checked = !isVisible;
         }
     }
 
     /**
-     * Toggle all children of a group efficiently
+     * Toggle all children of a group (LOCAL STATE ONLY - use Save to persist)
      */
-    async toggleGroupChildren(groupCb) {
-        const groupName = groupCb.dataset.id; // Helper uses name as ID
+    toggleGroupChildren(groupCb) {
+        const groupName = groupCb.dataset.id;
         const group = this.treeData.groups.find(g => g.name === groupName);
         if (!group) return;
 
         const isChecked = groupCb.checked;
-        const itemsToUpdate = [];
 
-        // 1. Update State for GROUP itself
-        if (isChecked) {
-            this.hiddenSet.delete(`group:${group.name}`);
-        } else {
-            this.hiddenSet.add(`group:${group.name}`);
-        }
-
-        // Fire API for the group visibility change
-        const groupApiCall = isChecked
-            ? API.channels.show(this.treeData.sourceId, 'group', group.name)
-            : API.channels.hide(this.treeData.sourceId, 'group', group.name);
-        groupApiCall.catch(err => console.error('Error updating group visibility:', err));
-
+        // Update state for all children
         group.items.forEach(item => {
             const key = `${item.type}:${item.id}`;
-            const currentlyHidden = this.hiddenSet.has(key);
-
-            // Only update if state changes
-            if (isChecked && currentlyHidden) {
+            if (isChecked) {
                 this.hiddenSet.delete(key);
-                itemsToUpdate.push({ sourceId: this.treeData.sourceId, itemType: item.type, itemId: item.id });
-            } else if (!isChecked && !currentlyHidden) {
+            } else {
                 this.hiddenSet.add(key);
-                itemsToUpdate.push({ sourceId: this.treeData.sourceId, itemType: item.type, itemId: item.id });
             }
         });
 
-        // 2. Update UI (re-render group without collapse)
-        // Find group element and update its checkboxes manually OR re-render
-        // Re-rendering is safest and fast for single group
+        // Re-render group to update all checkboxes
         const groupEl = this.contentTree.querySelector(`.content-group[data-group-id="${CSS.escape(group.id)}"]`);
         if (groupEl) {
             groupEl.outerHTML = this.getGroupHtml(group);
             const newEl = this.contentTree.querySelector(`.content-group[data-group-id="${CSS.escape(group.id)}"]`);
             if (newEl) this.attachTreeListeners(newEl);
         }
-
-        if (itemsToUpdate.length === 0) return;
-
-        try {
-            if (isChecked) {
-                await API.channels.bulkShow(itemsToUpdate);
-            } else {
-                await API.channels.bulkHide(itemsToUpdate);
-            }
-
-            if (window.app?.channelList) {
-                await window.app.channelList.loadHiddenItems();
-                window.app.channelList.render();
-            }
-        } catch (err) {
-            console.error('Error toggling group children:', err);
-            // Revert? Complex.
-        }
     }
 
     /**
-     * Set visibility for all items using Virtual State
+     * Set visibility for all items (LOCAL STATE ONLY - use Save to persist)
      */
-    async setAllVisibility(visible) {
+    setAllVisibility(visible) {
         if (!this.treeData || !this.treeData.groups) return;
 
-        // 1. Update State
-        const items = [];
-
+        // Update state for all items
         this.treeData.groups.forEach(group => {
-            // Group visibility (if it's a channel group)
-            if (group.type === 'group') {
-                const groupKey = `group:${group.name}`;
-                const isGroupHidden = this.hiddenSet.has(groupKey);
-
-                // Only update if state changes
-                if (visible && isGroupHidden) {
-                    this.hiddenSet.delete(groupKey);
-                    items.push({ sourceId: this.treeData.sourceId, itemType: 'group', itemId: group.name });
-                } else if (!visible && !isGroupHidden) {
-                    this.hiddenSet.add(groupKey);
-                    items.push({ sourceId: this.treeData.sourceId, itemType: 'group', itemId: group.name });
-                }
-            }
-
-            // Items visibility
             group.items.forEach(item => {
                 const key = `${item.type}:${item.id}`;
-                const isHidden = this.hiddenSet.has(key);
-
-                if (visible && isHidden) {
+                if (visible) {
                     this.hiddenSet.delete(key);
-                    items.push({ sourceId: this.treeData.sourceId, itemType: item.type, itemId: item.id });
-                } else if (!visible && !isHidden) {
+                } else {
                     this.hiddenSet.add(key);
-                    items.push({ sourceId: this.treeData.sourceId, itemType: item.type, itemId: item.id });
                 }
             });
         });
 
-        // 2. Re-render View (Fast because we only render headers + expanded groups)
+        // Re-render to reflect changes
         this.renderTree();
+    }
 
-        if (items.length === 0) return;
+    /**
+     * Save all content visibility changes to the server
+     */
+    async saveContentChanges() {
+        if (!this.treeData) {
+            alert('No content loaded to save');
+            return;
+        }
+
+        const saveBtn = document.getElementById('content-save');
+        if (saveBtn) {
+            saveBtn.disabled = true;
+            saveBtn.textContent = '⏳ Saving...';
+        }
 
         try {
-            if (visible) {
-                await API.channels.bulkShow(items);
-            } else {
-                await API.channels.bulkHide(items);
+            const sourceId = this.treeData.sourceId;
+            const itemsToShow = [];
+            const itemsToHide = [];
+
+            // Collect all items and determine their visibility
+            this.treeData.groups.forEach(group => {
+                group.items.forEach(item => {
+                    const key = `${item.type}:${item.id}`;
+                    const isHidden = this.hiddenSet.has(key);
+
+                    if (isHidden) {
+                        itemsToHide.push({ sourceId, itemType: item.type, itemId: item.id });
+                    } else {
+                        itemsToShow.push({ sourceId, itemType: item.type, itemId: item.id });
+                    }
+                });
+            });
+
+            // Execute bulk operations
+            const promises = [];
+            if (itemsToShow.length > 0) {
+                promises.push(API.channels.bulkShow(itemsToShow));
+            }
+            if (itemsToHide.length > 0) {
+                promises.push(API.channels.bulkHide(itemsToHide));
             }
 
+            await Promise.all(promises);
+
+            // Sync Channel List
             if (window.app?.channelList) {
                 await window.app.channelList.loadHiddenItems();
                 window.app.channelList.render();
             }
+
+            if (saveBtn) {
+                saveBtn.textContent = '✓ Saved!';
+                setTimeout(() => {
+                    saveBtn.textContent = '💾 Save Changes';
+                    saveBtn.disabled = false;
+                }, 1500);
+            }
+
         } catch (err) {
-            console.error('Error setting all visibility:', err);
-            alert('Failed to update visibility');
+            console.error('Error saving content changes:', err);
+            alert('Failed to save changes: ' + err.message);
+            if (saveBtn) {
+                saveBtn.textContent = '💾 Save Changes';
+                saveBtn.disabled = false;
+            }
         }
     }
 
